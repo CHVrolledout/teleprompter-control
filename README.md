@@ -17,7 +17,7 @@ It works in two ways, with the same pages:
 
 How it works:
 - A free public PeerJS service introduces the two devices once, using the room code.
-- After that, everything goes over an encrypted, direct WebRTC link. Your script never goes through any server.
+- After that, the devices talk over a direct WebRTC link when the network allows it. If it does not (phone on mobile data, Wi-Fi that blocks devices from seeing each other), they fall back to an internet relay automatically. The relay uses free public MQTT services, and messages are end-to-end encrypted with a key made from the room code. The controller shows which route is in use ("direct" or "via internet").
 - The iPad stores the script and settings in its own browser. It keeps the same room code, so if it reloads, the controller reconnects by itself.
 
 Good to know:

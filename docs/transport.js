@@ -3,20 +3,25 @@
 //  • "server": the page was opened from `node server.js` (Mac on the same Wi-Fi).
 //              Server-Sent Events + POSTs to that server.
 //  • "p2p":    the page was opened from static hosting (GitHub Pages).
-//              The iPad runs the hub itself and the controller connects to it directly
-//              over WebRTC. A free public PeerJS service is used only for the
-//              ~2-second handshake; after that, data flows device-to-device.
+//              The iPad runs the hub itself. Controllers reach it two ways at once:
+//                1. direct WebRTC link (PeerJS handles the handshake) — fastest, stays local
+//                2. encrypted internet relay (relay.js) — works on any network
+//              Commands use the direct link whenever it's open, the relay otherwise.
 //
 // Both modes deliver messages to `on.message(event, data)` where event is
 // 'script' | 'state' | 'pos' | 'cmd', and report link changes to `on.status(text, ok)`.
 
 import { createHub } from './hub.js';
+import { openRelay } from './relay.js';
 
 const PEERJS_URL = 'https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js';
 const PEER_PREFIX = 'tprompt-remote-v1-';
+// Public STUN only: PeerJS's own default TURN relay servers no longer exist.
+const ICE = { iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }] };
 const ROOM_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no 0/O/1/I/L
 const STATE_KEY = 'tp-state';
 const ROOM_KEY = 'tp-room';
+const NET_ERRORS = ['network', 'server-error', 'socket-error', 'socket-closed'];
 
 const store = {
   get(k) { try { return localStorage.getItem(k); } catch { return null; } },
@@ -79,7 +84,16 @@ function makeRoom() {
   return [...a].map((n) => ROOM_CHARS[n % ROOM_CHARS.length]).join('');
 }
 
-// The iPad: hosts the hub and accepts controller connections.
+// Retry opening the relay until it works (e.g. internet comes back).
+function keepRelay(room, side, onMessage, onChange, onReady) {
+  let tries = 0;
+  const attempt = () => openRelay(room, side, onMessage, onChange)
+    .then(onReady)
+    .catch(() => setTimeout(attempt, Math.min(15000, 2000 * ++tries)));
+  attempt();
+}
+
+// The iPad: hosts the hub and accepts controllers over both paths.
 async function p2pHost(on) {
   let room = normalizeRoom(store.get(ROOM_KEY));
   if (room.length < 4) { room = makeRoom(); store.set(ROOM_KEY, room); }
@@ -87,15 +101,30 @@ async function p2pHost(on) {
   let initial = {};
   try { initial = JSON.parse(store.get(STATE_KEY) || '{}'); } catch {}
 
-  const conns = new Set();
+  const conns = new Set();                 // direct PeerJS connections
+  const relayCtls = new Map();             // controller id -> { last, direct }
+  let relay = null;
+  let lastRelayPos = 0;
+
   const openConns = () => [...conns].filter((c) => c.open);
+  const relayOnly = () => [...relayCtls.values()].filter((c) => !c.direct).length;
+
   const hub = createHub({
     initial,
-    counts: () => ({ prompters: 1, controllers: openConns().length }),
+    counts: () => ({ prompters: 1, controllers: openConns().length + relayOnly() }),
     save: (s) => store.set(STATE_KEY, JSON.stringify(s)),
     emit: (event, data, role) => {
       if (role !== 'controller') on.message(event, data);
-      if (role !== 'prompter') for (const c of openConns()) c.send({ ev: event, data });
+      if (role === 'prompter') return;
+      for (const c of openConns()) c.send({ ev: event, data });
+      if (relay && relayOnly()) {
+        if (event === 'pos' && !data.seek) {             // relay: ~6 position updates/sec is plenty
+          const now = Date.now();
+          if (now - lastRelayPos < 150) return;
+          lastRelayPos = now;
+        }
+        relay.send({ ev: event, data });
+      }
     },
   });
 
@@ -103,19 +132,23 @@ async function p2pHost(on) {
   on.message('script', { script: hub.state.script });
   on.message('state', hub.publicState());
 
-  let peer = null;
   let signal = 'Connecting…';
   const report = () => {
-    const n = openConns().length;
-    if (n) on.status(`Room ${room} · ${n} controller${n > 1 ? 's' : ''} connected`, true);
-    else on.status(`Room ${room} · ${signal}`, false);
+    const d = openConns().length, r = relayOnly(), n = d + r;
+    if (n) {
+      const how = r && !d ? 'via internet' : d && !r ? 'direct' : 'direct + internet';
+      on.status(`Room ${room} · ${n} controller${n > 1 ? 's' : ''} connected (${how})`, true);
+    } else {
+      on.status(`Room ${room} · ${signal}`, false);
+    }
   };
 
+  /* Path 1: direct WebRTC */
+  let peer = null;
   async function startPeer() {
-    try { await loadPeerJS(); } catch { signal = 'No internet — can’t open room'; report(); return; }
-    peer = new window.Peer(PEER_PREFIX + room, { debug: 1 });
+    try { await loadPeerJS(); } catch { signal = 'no internet — retrying…'; report(); return; }
+    peer = new window.Peer(PEER_PREFIX + room, { debug: 1, config: ICE });
     peer.on('open', () => { signal = 'waiting for controller'; report(); });
-    peer.on('disconnected', () => { signal = 'handshake service offline (connected controllers keep working)'; report(); });
     peer.on('connection', (conn) => {
       conns.add(conn);
       conn.on('open', () => {
@@ -129,26 +162,41 @@ async function p2pHost(on) {
       conn.on('error', drop);
     });
     peer.on('error', (err) => {
-      if (err.type === 'unavailable-id') {
-        // The previous session for this room hasn't timed out yet (e.g. right after a reload).
-        signal = 'reopening room…';
-        report();
-        peer.destroy();
-      } else if (['network', 'server-error', 'socket-error', 'socket-closed'].includes(err.type)) {
-        signal = 'no internet for handshake — retrying…';
-        report();
-      }
+      if (err.type === 'unavailable-id') peer.destroy(); // old session still registered; watchdog retries
     });
   }
-
-  // Watchdog: keep the room registered with the handshake service.
   setInterval(() => {
     if (!peer || peer.destroyed) startPeer();
     else if (peer.disconnected) { try { peer.reconnect(); } catch {} }
   }, 4000);
   startPeer();
-  report();
 
+  /* Path 2: encrypted internet relay */
+  keepRelay(room, 'host', (m) => {
+    if (!m || !m.id) return;
+    if (m.kind === 'bye') {
+      if (relayCtls.delete(m.id)) { hub.changed(); report(); }
+      return;
+    }
+    const known = relayCtls.get(m.id);
+    const wasCounted = known && !known.direct;
+    relayCtls.set(m.id, { last: Date.now(), direct: !!m.direct });
+    if (m.kind === 'hello') {
+      if (!m.direct && (!known || m.want)) relay?.send({ ev: 'script', data: { script: hub.state.script } });
+      if (wasCounted !== !m.direct) { hub.changed(); report(); }
+      else if (!m.direct) relay?.send({ ev: 'state', data: hub.publicState() });
+    }
+    if (m.kind === 'cmd') hub.command(m.body);
+  }, () => {}, (r) => { relay = r; signal = 'waiting for controller'; report(); });
+
+  // Forget relay controllers that stopped saying hello.
+  setInterval(() => {
+    let changed = false;
+    for (const [id, c] of relayCtls) if (Date.now() - c.last > 15000) { relayCtls.delete(id); changed = true; }
+    if (changed) { hub.changed(); report(); }
+  }, 5000);
+
+  report();
   return {
     mode: 'p2p',
     room,
@@ -157,23 +205,36 @@ async function p2pHost(on) {
   };
 }
 
-// The controller: connects to the iPad's room.
+// The controller: connects to the iPad's room over both paths.
 async function p2pClient(room, on) {
   let peer = null;
   let conn = null;
   let dialedAt = 0;
-  let lastError = '';
+  let relay = null;
+  let relayHeardAt = 0;   // last message from the iPad via the relay
+  let problem = '';
 
+  const direct = () => !!(conn && conn.open);
+  const viaRelay = () => !direct() && Date.now() - relayHeardAt < 6000;
+
+  function report() {
+    if (direct()) on.status(`Connected · room ${room} (direct)`, true);
+    else if (viaRelay()) on.status(`Connected · room ${room} (via internet)`, true);
+    else on.status(problem || `Connecting to room ${room}…`, false);
+  }
+
+  const hello = (want = false) => relay?.send({ kind: 'hello', id: relay.id, direct: direct(), want });
+
+  /* Path 1: direct WebRTC */
   async function ensurePeer() {
-    try { await loadPeerJS(); } catch { on.status('No internet — can’t reach the iPad yet', false); return; }
+    try { await loadPeerJS(); } catch { return; }
     if (!peer || peer.destroyed) {
-      peer = new window.Peer({ debug: 1 });
+      peer = new window.Peer({ debug: 1, config: ICE });
       peer.on('open', dial);
       peer.on('error', (err) => {
-        if (err.type === 'peer-unavailable') lastError = `No iPad found in room ${room} — is the prompter open?`;
-        else if (['network', 'server-error', 'socket-error', 'socket-closed'].includes(err.type)) lastError = 'No internet for handshake — retrying…';
-        else lastError = 'Connection problem — retrying…';
-        on.status(lastError, false);
+        if (err.type === 'peer-unavailable') problem = `No iPad found in room ${room} — is the prompter open?`;
+        else if (NET_ERRORS.includes(err.type)) problem = 'Waiting for internet…';
+        report();
       });
     } else if (peer.disconnected) {
       try { peer.reconnect(); } catch {}
@@ -181,31 +242,49 @@ async function p2pClient(room, on) {
   }
 
   function dial() {
-    if (conn && (conn.open || Date.now() - dialedAt < 8000)) return;
+    if (conn && (conn.open || Date.now() - dialedAt < 10000)) return;
     if (conn) try { conn.close(); } catch {}
     dialedAt = Date.now();
-    on.status(`Connecting to room ${room}…`, false);
     const c = peer.connect(PEER_PREFIX + room, { reliable: true, serialization: 'json' });
     conn = c;
-    c.on('open', () => { if (conn === c) on.status(`Connected · room ${room}`, true); });
+    c.on('open', () => { if (conn === c) { problem = ''; report(); hello(); } });
     c.on('data', (m) => { if (conn === c && m && m.ev) on.message(m.ev, m.data); });
     const lost = () => {
       if (conn !== c) return;
       conn = null;
-      on.status('Lost the iPad — reconnecting…', false);
+      hello(true);  // fall back to the relay right away
+      report();
       ensurePeer();
     };
     c.on('close', lost);
     c.on('error', lost);
   }
+  // `?relay=only` disables the direct link (for testing the fallback).
+  if (new URLSearchParams(location.search).get('relay') !== 'only') {
+    setInterval(() => { if (!direct()) ensurePeer(); }, 4000);
+    ensurePeer();
+  }
 
-  setInterval(() => { if (!conn || !conn.open) ensurePeer(); }, 3000);
-  ensurePeer();
+  /* Path 2: encrypted internet relay */
+  keepRelay(room, 'ctl', (m) => {
+    if (!m || !m.ev || direct()) return;  // direct link wins when it's up
+    const was = viaRelay();
+    relayHeardAt = Date.now();
+    problem = '';
+    if (!was) report();
+    on.message(m.ev, m.data);
+  }, () => {}, (r) => { relay = r; hello(true); });
+  setInterval(() => { hello(); report(); }, 3000);
+  addEventListener('pagehide', () => relay?.send({ kind: 'bye', id: relay.id }));
 
+  report();
   return {
     mode: 'p2p',
     room,
-    command: (body) => { if (conn && conn.open) conn.send({ kind: 'cmd', body }); },
+    command: (body) => {
+      if (direct()) conn.send({ kind: 'cmd', body });
+      else relay?.send({ kind: 'cmd', id: relay.id, body });
+    },
     position: () => {},
   };
 }

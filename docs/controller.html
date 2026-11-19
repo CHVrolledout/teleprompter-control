@@ -285,7 +285,8 @@ handlers.state = (incoming) => {
 
 function updatePill() {
   const online = linkOk && !!S && S.prompters > 0;
-  ipadPill.textContent = online ? 'iPad connected' : linkOk ? 'iPad offline' : linkText;
+  const route = linkText.includes('(via internet)') ? ' · via internet' : linkText.includes('(direct)') ? ' · direct' : '';
+  ipadPill.textContent = online ? 'iPad connected' + route : linkOk ? 'iPad offline' : linkText;
   ipadPill.title = linkText;
   ipadPill.classList.toggle('ok', online);
   pv.classList.toggle('no-ipad', !online);
