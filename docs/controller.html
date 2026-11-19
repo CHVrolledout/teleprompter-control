@@ -7,7 +7,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Prompter Remote">
 <title>Prompter Controller</title>
-<link rel="stylesheet" href="text.css">
+<link rel="stylesheet" href="text.css?v=4">
 <style>
   :root {
     --bg: #0f1115; --panel: #181b22; --panel2: #20242d; --line: #2c313c;
@@ -207,8 +207,8 @@
 </div>
 
 <script type="module">
-import { renderScript, applyTextStyle, measure, yToAnchor, anchorToY, linePx, targetVelocity, textOffset, SPEED_K } from './shared.js';
-import { connect, detectMode, normalizeRoom, rememberRoom, lastRoom } from './transport.js';
+import { renderScript, applyTextStyle, measure, yToAnchor, anchorToY, linePx, targetVelocity, textOffset, SPEED_K } from './shared.js?v=4';
+import { connect, detectMode, normalizeRoom, rememberRoom, lastRoom } from './transport.js?v=4';
 
 let link = null;
 let linkOk = false, linkText = 'Connecting…';
