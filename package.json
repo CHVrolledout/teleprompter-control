@@ -1,0 +1,10 @@
+{
+  "name": "teleprompter-control",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Teleprompter for iPad, controlled live from a phone or laptop (peer-to-peer or local server).",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

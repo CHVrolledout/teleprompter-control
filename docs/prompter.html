@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Prompter">
+<title>Prompter</title>
+<link rel="stylesheet" href="text.css">
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #fff; overflow: hidden;
+    -webkit-user-select: none; user-select: none; touch-action: none; -webkit-touch-callout: none; }
+  #flip { position: fixed; inset: 0; overflow: hidden; }
+  #text { position: absolute; left: 0; right: 0; top: 0; will-change: transform; }
+  .marker { position: absolute; width: 0; height: 0; border-top: 18px solid transparent;
+    border-bottom: 18px solid transparent; transform: translateY(-50%); opacity: .85; }
+  #mL { left: 0; border-left: 26px solid #ffcc00; }
+  #mR { right: 0; border-right: 26px solid #ffcc00; }
+  #badge { position: fixed; top: 10px; right: 12px; font: 600 13px -apple-system, system-ui, sans-serif;
+    padding: 6px 10px; border-radius: 99px; background: #8a5a00; color: #fff; transition: opacity .8s; z-index: 5;
+    max-width: calc(100vw - 24px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #badge.ok { background: #1b7f3b; opacity: 0; transition-delay: 2.5s; }
+  #start { position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column; gap: 14px;
+    align-items: center; justify-content: center; background: rgba(0,0,0,.92);
+    font: 500 19px -apple-system, system-ui, sans-serif; text-align: center; padding: 24px; overflow: auto; }
+  #start > :first-child { margin-top: auto; }   /* centre, but scroll instead of clipping on short screens */
+  #start > :last-child { margin-bottom: auto; }
+  #start.hidden { display: none; }
+  #start b { font-size: 30px; }
+  #start small { color: #aaa; font-size: 14px; max-width: 560px; line-height: 1.5; }
+  #roomBox { display: none; flex-direction: column; align-items: center; gap: 10px; }
+  #roomBox.show { display: flex; }
+  #roomCode { font: 800 64px ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .12em; color: #ffcc00; }
+  #qr { background: #fff; padding: 10px; border-radius: 12px; line-height: 0; }
+  #qr:empty { display: none; }
+  #qr svg { width: 180px; height: 180px; }
+  #ctlUrl { color: #ddd; font-size: 15px; word-break: break-all; }
+  .go { margin-top: 6px; background: #ffcc00; color: #1a1400; border-radius: 12px; padding: 12px 22px; font-weight: 700; }
+</style>
+</head>
+<body>
+<div id="flip">
+  <div id="text" class="script"></div>
+  <div id="mL" class="marker"></div>
+  <div id="mR" class="marker"></div>
+</div>
+<div id="badge">Starting…</div>
+<div id="start">
+  <div id="roomBox">
+    <span>Room code</span>
+    <div id="roomCode">······</div>
+    <div id="qr"></div>
+    <span>On your phone, scan the QR code — or open<br><span id="ctlUrl"></span><br>and enter the code.</span>
+  </div>
+  <div class="go">Tap anywhere to start</div>
+  <small>Goes full screen. Double-tap the prompter any time to see this screen again.<br>
+    Tip: Share → Add to Home Screen gives a true full-screen prompter. Set Settings → Display → Auto-Lock to “Never”.</small>
+</div>
+
+<script type="module">
+import { renderScript, applyTextStyle, measure, yToAnchor, anchorToY, linePx, targetVelocity, textOffset } from './shared.js';
+import { connect } from './transport.js';
+
+const textEl = document.getElementById('text');
+const flip = document.getElementById('flip');
+const badge = document.getElementById('badge');
+const startEl = document.getElementById('start');
+const mL = document.getElementById('mL'), mR = document.getElementById('mR');
+
+let S = null;          // settings/state
+let m = { rows: [], total: 0 };
+let y = 0;             // content y at the eye line
+let v = 0;             // current velocity px/s (eased towards target)
+let pending = 0;       // smooth correction still to apply (nudges / seeks)
+let scriptText = null;
+let link = null;       // transport
+
+function applyState() {
+  applyTextStyle(textEl, S);
+  flip.style.transform = `scale(${S.mirrorX ? -1 : 1}, ${S.mirrorY ? -1 : 1})`;
+  mL.style.top = mR.style.top = (innerHeight * S.markerPct) / 100 + 'px';
+  mL.style.display = mR.style.display = S.showMarker ? '' : 'none';
+}
+
+function relayout() {
+  const a = yToAnchor(m, y);
+  m = measure(textEl);
+  y = anchorToY(m, a); pending = 0;
+}
+
+const handlers = {
+  script({ script }) {
+    scriptText = script;
+    if (!S) return;
+    const a = yToAnchor(m, y);
+    renderScript(textEl, scriptText);
+    m = measure(textEl);
+    y = anchorToY(m, a); pending = 0;
+  },
+  state(next) {
+    const prev = S;
+    S = next;
+    const a = prev ? yToAnchor(m, y) : S.anchor;
+    if (!prev && scriptText !== null) renderScript(textEl, scriptText);
+    applyState();
+    if (!prev || prev.fontSize !== S.fontSize || prev.lineHeight !== S.lineHeight || prev.margin !== S.margin || prev.align !== S.align) {
+      m = measure(textEl);
+      y = anchorToY(m, a); pending = 0;
+    }
+  },
+  cmd(c) {
+    if (!S) return;
+    if (c.type === 'nudge') pending += c.px + c.lines * linePx(S);
+    if (c.type === 'seek') {
+      const target = anchorToY(m, c.anchor);
+      const dist = target - (y + pending);
+      if (Math.abs(dist) > innerHeight) { y = target; pending = 0; } else pending += dist;
+    }
+  },
+  pos() {},
+};
+
+function setStatus(text, ok) {
+  badge.textContent = text;
+  badge.className = ok ? 'ok' : '';
+}
+
+addEventListener('resize', () => { if (S) { applyState(); relayout(); } });
+document.fonts?.ready.then(() => S && relayout());
+
+// Main loop
+let last = performance.now(), lastReport = 0, lastSent = '';
+function frame(now) {
+  const dt = Math.min(0.1, (now - last) / 1000);
+  last = now;
+  if (S) {
+    v += (targetVelocity(S) - v) * Math.min(1, dt * 5);   // ease speed changes
+    if (!S.playing && Math.abs(v) < 0.5) v = 0;
+    y += v * dt;
+    const step = pending * Math.min(1, dt * 12);         // smooth nudges
+    y += step; pending -= step;
+    if (Math.abs(pending) < 0.2) { y += pending; pending = 0; }
+    if (y < 0) { y = 0; pending = Math.max(0, pending); }
+    if (y > m.total) {
+      y = m.total; pending = Math.min(0, pending);
+      if (S.playing && link) link.command({ type: 'pause' });
+    }
+    textEl.style.transform = `translate3d(0, ${textOffset(S, innerHeight, y)}px, 0)`;
+
+    // report position ~10x/sec while moving, 1x/sec when idle
+    const anchor = Math.round(yToAnchor(m, y) * 10000) / 10000;
+    const key = anchor + '|' + innerWidth + 'x' + innerHeight;
+    if (link && now - lastReport > (key !== lastSent ? 100 : 1000)) {
+      lastReport = now; lastSent = key;
+      link.position({ anchor, vw: innerWidth, vh: innerHeight });
+    }
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// Connect (local server if present, otherwise peer-to-peer room)
+link = await connect('prompter', { message: (ev, data) => handlers[ev]?.(data), status: setStatus });
+if (link.mode === 'p2p') showRoom(link.room);
+
+async function showRoom(room) {
+  const url = new URL('controller.html', location.href);
+  url.search = '?room=' + room;
+  document.getElementById('roomCode').textContent = room;
+  document.getElementById('ctlUrl').textContent = url.href.replace(/^https?:\/\//, '');
+  document.getElementById('roomBox').classList.add('show');
+  try {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js';
+      s.onload = resolve; s.onerror = reject;
+      document.head.appendChild(s);
+    });
+    const qr = window.qrcode(0, 'M');
+    qr.addData(url.href);
+    qr.make();
+    document.getElementById('qr').innerHTML = qr.createSvgTag({ cellSize: 4, margin: 0 });
+  } catch {}
+}
+
+// Start overlay: a user gesture is needed for full screen (and wake lock where supported).
+async function keepAwake() {
+  try { await navigator.wakeLock?.request('screen'); } catch {}
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') keepAwake(); });
+startEl.addEventListener('click', async () => {
+  startEl.classList.add('hidden');
+  const de = document.documentElement;
+  try { await (de.requestFullscreen?.() || de.webkitRequestFullscreen?.()); } catch {}
+  keepAwake();
+});
+// Double-tap the prompter to bring the room code back.
+let lastTap = 0;
+document.getElementById('flip').addEventListener('pointerup', () => {
+  const now = Date.now();
+  if (now - lastTap < 350) startEl.classList.remove('hidden');
+  lastTap = now;
+});
+</script>
+</body>
+</html>

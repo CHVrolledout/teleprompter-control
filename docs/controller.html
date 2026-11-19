@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Prompter Remote">
+<title>Prompter Controller</title>
+<link rel="stylesheet" href="/text.css">
+<style>
+  :root {
+    --bg: #0f1115; --panel: #181b22; --panel2: #20242d; --line: #2c313c;
+    --fg: #e9ecf1; --muted: #8b93a3; --accent: #ffcc00; --accent-fg: #1a1400;
+    --ok: #2fbf62; --bad: #e5484d; --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.4 -apple-system, system-ui, "Segoe UI", Roboto, sans-serif; }
+  body { padding: max(12px, env(safe-area-inset-top)) 16px 32px; max-width: 1280px; margin: 0 auto; }
+  button { font: inherit; color: inherit; }
+
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 650; flex: 1; }
+  .pill { font-size: 13px; padding: 5px 10px; border-radius: 99px; background: var(--panel2);
+    display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--bad); }
+  .pill.ok::before { background: var(--ok); }
+  .pill.room { border: 1px solid var(--line); cursor: pointer; font-family: ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .06em; }
+  .pill.room::before { display: none; }
+  #ipad { max-width: 46vw; overflow: hidden; text-overflow: ellipsis; }
+
+  #join { position: fixed; inset: 0; z-index: 20; background: rgba(8,9,12,.92); display: flex;
+    align-items: center; justify-content: center; padding: 16px; }
+  #join[hidden] { display: none; }
+  #joinForm { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 22px; width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 12px; }
+  #joinForm h2 { margin: 0; font-size: 20px; }
+  #joinForm p { margin: 0; color: var(--muted); }
+  #roomInput { font: 700 30px ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .15em; text-align: center;
+    text-transform: uppercase; background: var(--bg); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 10px; padding: 12px; width: 100%; }
+
+  .layout { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
+  @media (min-width: 960px) { .layout { grid-template-columns: minmax(0, 1.35fr) minmax(320px, 1fr); } }
+
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
+  .card + .card { margin-top: 16px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+    margin: 0 0 10px; font-weight: 600; }
+
+  /* Preview */
+  #pvHost { display: flex; justify-content: center; }
+  #pv { position: relative; overflow: hidden; background: #000; border-radius: 10px;
+    touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; }
+  #pv.dragging { cursor: grabbing; }
+  #inner { position: absolute; left: 0; top: 0; transform-origin: 0 0; overflow: hidden; }
+  #ptext { position: absolute; left: 0; right: 0; top: 0; will-change: transform; }
+  #eye { position: absolute; left: 0; right: 0; height: 0; opacity: .9; pointer-events: none; }
+  #eye::before, #eye::after { content: ""; position: absolute; top: -8px; border: 7px solid transparent; }
+  #eye::before { left: 0; border-left: 10px solid var(--accent); }
+  #eye::after { right: 0; border-right: 10px solid var(--accent); }
+  #pvHint { position: absolute; right: 8px; bottom: 8px; font-size: 12px; color: #fff;
+    background: rgba(0,0,0,.55); padding: 3px 8px; border-radius: 6px; pointer-events: none; }
+  #offline { position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+    background: rgba(0,0,0,.6); color: #fff; font-weight: 600; text-align: center; padding: 16px; pointer-events: none; }
+  #pv.no-ipad #offline { display: flex; }
+
+  #progRow { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 13px; color: var(--muted); }
+  #prog { flex: 1; height: 22px; display: flex; align-items: center; cursor: pointer; touch-action: none; }
+  #prog > div { height: 6px; width: 100%; background: var(--panel2); border-radius: 99px; overflow: hidden; }
+  #progFill { height: 100%; width: 0; background: var(--accent); }
+
+  /* Transport */
+  .transport { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-top: 12px; }
+  .btn { background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; min-height: 52px;
+    font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;
+    -webkit-tap-highlight-color: transparent; }
+  .btn:active { transform: scale(.97); background: var(--line); }
+  .btn small { font-size: 11px; color: var(--muted); }
+  #play { grid-column: 1 / -1; order: -1; min-height: 60px; background: var(--accent); color: var(--accent-fg); border: 0; font-weight: 700; font-size: 20px; }
+  #play.on { background: var(--fg); color: var(--bg); }
+
+  /* Sliders */
+  .row { display: grid; grid-template-columns: 92px 44px minmax(0,1fr) 44px 54px; align-items: center; gap: 8px; margin: 10px 0; }
+  .row label { color: var(--muted); font-size: 14px; }
+  .row .val { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .step { height: 40px; border-radius: 10px; background: var(--panel2); border: 1px solid var(--line); font-size: 20px; cursor: pointer; }
+  input[type=range] { width: 100%; accent-color: var(--accent); height: 28px; }
+  .big .step { height: 48px; font-size: 24px; }
+
+  .toggles { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+  .chip { border: 1px solid var(--line); background: var(--panel2); border-radius: 99px; padding: 8px 14px; cursor: pointer; font-size: 14px; }
+  .chip[aria-pressed=true] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
+
+  textarea { width: 100%; min-height: 260px; resize: vertical; background: var(--bg); color: var(--fg);
+    border: 1px solid var(--line); border-radius: 10px; padding: 12px; font: 15px/1.5 -apple-system, system-ui, sans-serif; }
+  .actions { display: flex; gap: 8px; margin-top: 10px; align-items: center; flex-wrap: wrap; }
+  .primary { background: var(--accent); color: var(--accent-fg); border: 0; border-radius: 10px; padding: 11px 16px; font-weight: 700; cursor: pointer; }
+  .secondary { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; cursor: pointer; }
+  #scriptStatus { color: var(--muted); font-size: 13px; }
+  .keys { color: var(--muted); font-size: 12.5px; line-height: 1.7; }
+  kbd { background: var(--panel2); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 0 5px; font-size: 11.5px; }
+
+  /* Phone: tabs between Control and Script */
+  .tabs { display: none; }
+  @media (max-width: 959px) {
+    .tabs { display: flex; gap: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 4px; margin-bottom: 12px; }
+    .tabs button { flex: 1; border: 0; background: none; padding: 9px; border-radius: 9px; cursor: pointer; color: var(--muted); font-weight: 600; }
+    .tabs button[aria-selected=true] { background: var(--panel2); color: var(--fg); }
+    body[data-tab=control] #scriptCard, body[data-tab=script] .control-only { display: none; }
+    .keys { display: none; }
+    .row { grid-template-columns: 74px 44px minmax(0,1fr) 44px 48px; }
+  }
+</style>
+</head>
+<body data-tab="control">
+<header>
+  <h1>Prompter Controller</h1>
+  <button id="roomBtn" class="pill room" hidden title="Change room"></button>
+  <span id="ipad" class="pill">Connecting…</span>
+</header>
+
+<div id="join" hidden>
+  <form id="joinForm">
+    <h2>Join the iPad</h2>
+    <p>Enter the room code shown on the iPad’s prompter screen.</p>
+    <input id="roomInput" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="8" placeholder="e.g. K7P2QX" required>
+    <button class="primary" type="submit">Connect</button>
+  </form>
+</div>
+
+<div class="tabs" role="tablist">
+  <button role="tab" data-tab="control" aria-selected="true">Control</button>
+  <button role="tab" data-tab="script" aria-selected="false">Script</button>
+</div>
+
+<div class="layout">
+  <div class="control-only">
+    <div class="card">
+      <div id="pvHost">
+        <div id="pv" class="no-ipad">
+          <div id="inner"><div id="ptext" class="script"></div></div>
+          <div id="eye"></div>
+          <div id="pvHint">Drag or scroll to move text</div>
+          <div id="offline">iPad not connected —<br>open the Prompter on the iPad</div>
+        </div>
+      </div>
+      <div id="progRow">
+        <span id="pct">0%</span>
+        <div id="prog"><div><div id="progFill"></div></div></div>
+        <span id="remain">—</span>
+      </div>
+      <div class="transport">
+        <button class="btn" id="top" title="Back to top"><span>⤒</span><small>Top</small></button>
+        <button class="btn" data-nudge="-3" title="Back 3 lines">⇈</button>
+        <button class="btn" data-nudge="-1" title="Back 1 line">↑</button>
+        <button class="btn" data-nudge="1" title="Forward 1 line">↓</button>
+        <button class="btn" data-nudge="3" title="Forward 3 lines">⇊</button>
+        <button class="btn" id="play">▶ Play</button>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="card control-only">
+      <h2>Speed & size</h2>
+      <div class="row big" data-key="speed" data-min="0" data-max="15" data-step="0.1" data-bump="0.2" data-fmt="1">
+        <label>Speed</label><button class="step" data-dir="-1">−</button><input type="range"><button class="step" data-dir="1">+</button><span class="val"></span>
+      </div>
+      <div class="row big" data-key="fontSize" data-min="24" data-max="200" data-step="2" data-bump="4" data-fmt="0">
+        <label>Font size</label><button class="step" data-dir="-1">−</button><input type="range"><button class="step" data-dir="1">+</button><span class="val"></span>
+      </div>
+      <div class="row" data-key="lineHeight" data-min="1" data-max="2.2" data-step="0.05" data-bump="0.05" data-fmt="2">
+        <label>Line gap</label><button class="step" data-dir="-1">−</button><input type="range"><button class="step" data-dir="1">+</button><span class="val"></span>
+      </div>
+      <div class="row" data-key="margin" data-min="0" data-max="30" data-step="1" data-bump="1" data-fmt="0" data-unit="%">
+        <label>Margins</label><button class="step" data-dir="-1">−</button><input type="range"><button class="step" data-dir="1">+</button><span class="val"></span>
+      </div>
+      <div class="row" data-key="markerPct" data-min="10" data-max="70" data-step="1" data-bump="2" data-fmt="0" data-unit="%">
+        <label>Eye line</label><button class="step" data-dir="-1">−</button><input type="range"><button class="step" data-dir="1">+</button><span class="val"></span>
+      </div>
+      <div class="toggles">
+        <button class="chip" data-toggle="mirrorX" aria-pressed="false">Mirror ⇋</button>
+        <button class="chip" data-toggle="mirrorY" aria-pressed="false">Flip ⇵</button>
+        <button class="chip" data-toggle="showMarker" aria-pressed="true">Eye-line arrows</button>
+        <button class="chip" id="align" aria-pressed="false">Center text</button>
+      </div>
+    </div>
+
+    <div class="card" id="scriptCard">
+      <h2>Script</h2>
+      <textarea id="script" spellcheck="false" placeholder="Paste the script here…"></textarea>
+      <div class="actions">
+        <button class="primary" id="sendScript">Send to iPad</button>
+        <label class="secondary">Open .txt<input type="file" id="file" accept=".txt,text/plain" hidden></label>
+        <span id="scriptStatus"></span>
+      </div>
+    </div>
+
+    <div class="card keys control-only">
+      <h2>Keyboard</h2>
+      <kbd>Space</kbd> play/pause · <kbd>↑</kbd><kbd>↓</kbd> nudge a line (<kbd>Shift</kbd> = 3) ·
+      <kbd>←</kbd><kbd>→</kbd> speed · <kbd>-</kbd><kbd>=</kbd> font size · <kbd>Home</kbd> top
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { renderScript, applyTextStyle, measure, yToAnchor, anchorToY, linePx, targetVelocity, textOffset, SPEED_K } from './shared.js';
+import { connect, detectMode, normalizeRoom, rememberRoom, lastRoom } from './transport.js';
+
+let link = null;
+let linkOk = false, linkText = 'Connecting…';
+const cmd = (body) => link?.command(body);
+
+const $ = (s, r = document) => r.querySelector(s);
+const pv = $('#pv'), inner = $('#inner'), ptext = $('#ptext'), eye = $('#eye');
+const playBtn = $('#play'), ipadPill = $('#ipad');
+const scriptBox = $('#script'), scriptStatus = $('#scriptStatus');
+
+let S = null, serverScript = null;
+let m = { rows: [], total: 0 };
+let y = 0, v = 0, pending = 0;
+let k = 1;                 // preview scale = preview px / iPad px
+let holdUntil = 0;         // ignore iPad position reports briefly after a local move
+let lastPatchAt = {};      // per-key time of the last local slider change
+
+/* ---------- Tabs (phone) ---------- */
+document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => {
+  document.body.dataset.tab = b.dataset.tab;
+  document.querySelectorAll('.tabs button').forEach((x) => x.setAttribute('aria-selected', x === b));
+  if (b.dataset.tab === 'control') sizePreview();
+}));
+
+/* ---------- Preview sizing (render at the iPad's real size, then scale down) ---------- */
+function sizePreview() {
+  if (!S) return;
+  const { w, h } = S.viewport;
+  const host = $('#pvHost');
+  const maxH = Math.min(innerHeight * 0.55, 560);
+  const width = Math.max(120, Math.min(host.clientWidth, maxH * (w / h)));
+  k = width / w;
+  pv.style.width = width + 'px';
+  pv.style.height = (width * h) / w + 'px';
+  inner.style.width = w + 'px';
+  inner.style.height = h + 'px';
+  inner.style.transform = `scale(${k})`;
+  eye.style.top = (S.markerPct / 100) * h * k + 'px';
+}
+addEventListener('resize', sizePreview);
+
+function relayout() {
+  const a = yToAnchor(m, y);
+  applyTextStyle(ptext, S);
+  sizePreview();
+  m = measure(ptext);
+  y = anchorToY(m, a); pending = 0;
+}
+
+/* ---------- Messages from the iPad / server ---------- */
+const handlers = {};
+handlers.script = ({ script }) => {
+  serverScript = script;
+  const a = yToAnchor(m, y);
+  renderScript(ptext, serverScript);
+  m = measure(ptext);
+  y = anchorToY(m, a);
+  if (!scriptBox.dataset.dirty) scriptBox.value = serverScript;
+  updateScriptStatus();
+};
+
+handlers.state = (incoming) => {
+  const prev = S;
+  // keep local values for sliders the user is touching right now
+  const now = performance.now();
+  for (const key in lastPatchAt) if (now - lastPatchAt[key] < 800) incoming[key] = S[key];
+  S = incoming;
+  if (!prev) { applyTextStyle(ptext, S); sizePreview(); m = measure(ptext); y = anchorToY(m, S.anchor); }
+  else if (['fontSize', 'lineHeight', 'margin', 'align'].some((x) => prev[x] !== S[x]) ||
+           prev.viewport.w !== S.viewport.w || prev.viewport.h !== S.viewport.h || prev.markerPct !== S.markerPct) relayout();
+  syncControls();
+  updatePill();
+};
+
+function updatePill() {
+  const online = linkOk && !!S && S.prompters > 0;
+  ipadPill.textContent = online ? 'iPad connected' : linkOk ? 'iPad offline' : linkText;
+  ipadPill.title = linkText;
+  ipadPill.classList.toggle('ok', online);
+  pv.classList.toggle('no-ipad', !online);
+}
+
+handlers.pos = (p) => {
+  if (!S || performance.now() < holdUntil) return;
+  const target = anchorToY(m, p.anchor) + v * 0.05; // small latency compensation
+  const err = target - (y + pending);
+  if (Math.abs(err) > S.viewport.h * 0.6) { y = target; pending = 0; }
+  else if (Math.abs(err) > 1) pending += err;
+};
+
+/* ---------- Animation loop (mirrors the iPad's motion) ---------- */
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.1, (now - last) / 1000);
+  last = now;
+  if (S) {
+    v += (targetVelocity(S) - v) * Math.min(1, dt * 5);
+    if (!S.playing && Math.abs(v) < 0.5) v = 0;
+    y += v * dt;
+    const step = pending * Math.min(1, dt * 12);
+    y += step; pending -= step;
+    y = Math.max(0, Math.min(m.total, y));
+    ptext.style.transform = `translate3d(0, ${textOffset(S, S.viewport.h, y)}px, 0)`;
+
+    const frac = m.total ? y / m.total : 0;
+    $('#progFill').style.width = (frac * 100).toFixed(1) + '%';
+    $('#pct').textContent = Math.round(frac * 100) + '%';
+    const pxs = S.speed * SPEED_K * linePx(S);
+    const secs = pxs > 0 ? (m.total - y) / pxs : NaN;
+    $('#remain').textContent = isFinite(secs) ? `${Math.floor(secs / 60)}:${String(Math.floor(secs % 60)).padStart(2, '0')} left` : '—';
+    playBtn.textContent = S.playing ? '❚❚ Pause' : '▶ Play';
+    playBtn.classList.toggle('on', S.playing);
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+/* ---------- Moving the text ---------- */
+let sendPx = 0, flushTimer = null;
+// Smooth move (buttons/keys): animate locally and tell the iPad.
+function moveBy(px) {             // px in iPad pixels; + = forward
+  if (!S) return;
+  pending += px;
+  forward(px);
+}
+// Send a relative move to the iPad (batched every 50ms so dragging doesn't flood the network).
+function forward(px) {
+  sendPx += px;
+  holdUntil = performance.now() + 700;
+  if (!flushTimer) flushTimer = setTimeout(() => {
+    flushTimer = null;
+    if (sendPx) cmd({ type: 'nudge', px: sendPx });
+    sendPx = 0;
+  }, 50);
+}
+const nudgeLines = (n) => moveBy(n * linePx(S));
+document.querySelectorAll('[data-nudge]').forEach((b) => b.addEventListener('click', () => nudgeLines(+b.dataset.nudge)));
+$('#top').addEventListener('click', () => { holdUntil = performance.now() + 700; y = 0; pending = 0; cmd({ type: 'top' }); });
+playBtn.addEventListener('click', () => { if (!S) return; S.playing = !S.playing; cmd({ type: S.playing ? 'play' : 'pause' }); });
+
+// Drag the preview like a touch screen
+let dragY = null;
+pv.addEventListener('pointerdown', (e) => { dragY = e.clientY; pv.setPointerCapture(e.pointerId); pv.classList.add('dragging'); });
+pv.addEventListener('pointermove', (e) => {
+  if (dragY === null) return;
+  const d = e.clientY - dragY; dragY = e.clientY;
+  if (d) { y -= d / k; forward(-d / k); }
+});
+const endDrag = () => { dragY = null; pv.classList.remove('dragging'); };
+pv.addEventListener('pointerup', endDrag);
+pv.addEventListener('pointercancel', endDrag);
+pv.addEventListener('wheel', (e) => { e.preventDefault(); y += e.deltaY / k; forward(e.deltaY / k); }, { passive: false });
+
+// Progress bar seek
+const prog = $('#prog');
+let seeking = false;
+function seekAt(e) {
+  const r = prog.getBoundingClientRect();
+  const frac = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+  y = frac * m.total; pending = 0;
+  holdUntil = performance.now() + 700;
+  cmd({ type: 'seek', anchor: yToAnchor(m, y) });
+}
+prog.addEventListener('pointerdown', (e) => { seeking = true; prog.setPointerCapture(e.pointerId); seekAt(e); });
+prog.addEventListener('pointermove', (e) => { if (seeking) seekAt(e); });
+prog.addEventListener('pointerup', () => (seeking = false));
+
+/* ---------- Settings ---------- */
+const patchQueue = {};
+let patchTimer = null;
+function setValue(key, val) {
+  S[key] = val;
+  lastPatchAt[key] = performance.now();
+  patchQueue[key] = val;
+  if (['fontSize', 'lineHeight', 'margin', 'align', 'markerPct'].includes(key)) relayout();
+  syncControls();
+  if (!patchTimer) patchTimer = setTimeout(() => {
+    patchTimer = null;
+    cmd({ type: 'set', patch: { ...patchQueue } });
+    for (const k2 in patchQueue) delete patchQueue[k2];
+  }, 60);
+}
+
+const rows = [...document.querySelectorAll('.row[data-key]')];
+for (const row of rows) {
+  const { key, min, max, step, bump } = row.dataset;
+  const range = $('input', row);
+  Object.assign(range, { min, max, step });
+  const clamp = (x) => Math.min(+max, Math.max(+min, Math.round(x / +step) * +step));
+  range.addEventListener('input', () => setValue(key, clamp(+range.value)));
+  row.querySelectorAll('.step').forEach((b) => b.addEventListener('click', () => setValue(key, clamp(S[key] + +b.dataset.dir * +bump))));
+}
+function bumpKey(key, dir) {
+  const row = rows.find((r) => r.dataset.key === key);
+  const { min, max, step, bump } = row.dataset;
+  setValue(key, Math.min(+max, Math.max(+min, Math.round((S[key] + dir * +bump) / +step) * +step)));
+}
+
+document.querySelectorAll('[data-toggle]').forEach((b) => b.addEventListener('click', () => setValue(b.dataset.toggle, !S[b.dataset.toggle])));
+$('#align').addEventListener('click', () => setValue('align', S.align === 'center' ? 'left' : 'center'));
+
+function syncControls() {
+  if (!S) return;
+  for (const row of rows) {
+    const { key, fmt, unit = '' } = row.dataset;
+    const range = $('input', row);
+    if (document.activeElement !== range) range.value = S[key];
+    $('.val', row).textContent = Number(S[key]).toFixed(+fmt) + unit;
+  }
+  document.querySelectorAll('[data-toggle]').forEach((b) => b.setAttribute('aria-pressed', !!S[b.dataset.toggle]));
+  $('#align').setAttribute('aria-pressed', S.align === 'center');
+}
+
+/* ---------- Script ---------- */
+function updateScriptStatus() {
+  const dirty = scriptBox.value !== serverScript;
+  if (dirty) scriptBox.dataset.dirty = '1'; else delete scriptBox.dataset.dirty;
+  scriptStatus.textContent = dirty ? 'Unsent changes' : 'On iPad ✓';
+}
+scriptBox.addEventListener('input', updateScriptStatus);
+$('#sendScript').addEventListener('click', () => {
+  cmd({ type: 'set', patch: { script: scriptBox.value } });
+  scriptStatus.textContent = 'Sending…';
+});
+$('#file').addEventListener('change', async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  scriptBox.value = await f.text();
+  updateScriptStatus();
+  e.target.value = '';
+});
+
+/* ---------- Keyboard ---------- */
+addEventListener('keydown', (e) => {
+  if (!S || e.target.closest('textarea, input:not([type=range])') || e.metaKey || e.ctrlKey) return;
+  const n = e.shiftKey ? 3 : 1;
+  switch (e.key) {
+    case ' ': playBtn.click(); break;
+    case 'ArrowDown': nudgeLines(n); break;
+    case 'ArrowUp': nudgeLines(-n); break;
+    case 'ArrowRight': bumpKey('speed', 1); break;
+    case 'ArrowLeft': bumpKey('speed', -1); break;
+    case '=': case '+': bumpKey('fontSize', 1); break;
+    case '-': case '_': bumpKey('fontSize', -1); break;
+    case 'Home': $('#top').click(); break;
+    default: return;
+  }
+  e.preventDefault();
+});
+
+/* ---------- Connect ---------- */
+const on = {
+  message: (ev, data) => handlers[ev]?.(data),
+  status: (text, ok) => { linkText = text; linkOk = ok; updatePill(); },
+};
+
+const mode = await detectMode();
+if (mode === 'server') {
+  link = await connect('controller', on, { mode });
+} else {
+  const params = new URLSearchParams(location.search);
+  const room = normalizeRoom(params.get('room')) || lastRoom();
+  const roomBtn = $('#roomBtn');
+  const askRoom = (prefill = '') => {
+    $('#join').hidden = false;
+    $('#roomInput').value = prefill;
+    $('#roomInput').focus();
+  };
+  $('#joinForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const code = normalizeRoom($('#roomInput').value);
+    if (code.length < 4) return;
+    rememberRoom(code);
+    const url = new URL(location.href);
+    url.searchParams.set('room', code);
+    location.href = url.href; // reload into the room (keeps reconnect logic simple)
+  });
+  roomBtn.addEventListener('click', () => askRoom(''));
+  if (room.length >= 4) {
+    rememberRoom(room);
+    roomBtn.textContent = room;
+    roomBtn.hidden = false;
+    link = await connect('controller', on, { mode, room });
+  } else {
+    linkText = 'No room yet';
+    updatePill();
+    askRoom();
+  }
+}
+</script>
+</body>
+</html>

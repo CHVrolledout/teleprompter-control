@@ -1,0 +1,10 @@
+/* Shared script typography — identical on the iPad and in the controller preview. */
+.script {
+  font-family: -apple-system, "SF Pro Display", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-weight: 600;
+  color: #fff;
+  box-sizing: border-box;
+  overflow-wrap: break-word;
+  -webkit-font-smoothing: antialiased;
+}
+.script p { margin: 0; white-space: pre-wrap; }
