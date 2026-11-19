@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="Prompter">
 <title>Prompter</title>
-<link rel="stylesheet" href="text.css?v=4">
+<link rel="stylesheet" href="text.css?v=5">
 <style>
   html, body { margin: 0; height: 100%; background: #000; color: #fff; overflow: hidden;
     -webkit-user-select: none; user-select: none; touch-action: none; -webkit-touch-callout: none; }
@@ -60,8 +60,8 @@
 </div>
 
 <script type="module">
-import { renderScript, applyTextStyle, measure, yToAnchor, anchorToY, linePx, targetVelocity, textOffset } from './shared.js?v=4';
-import { connect } from './transport.js?v=4';
+import { renderScript, applyTextStyle, measure, yToAnchor, anchorToY, linePx, targetVelocity, textOffset, colorsFor } from './shared.js?v=5';
+import { connect } from './transport.js?v=5';
 
 const textEl = document.getElementById('text');
 const flip = document.getElementById('flip');
@@ -79,6 +79,10 @@ let link = null;       // transport
 
 function applyState() {
   applyTextStyle(textEl, S);
+  const c = colorsFor(S);
+  document.documentElement.style.background = document.body.style.background = flip.style.background = c.bg;
+  textEl.style.color = c.fg;
+  mL.style.borderLeftColor = mR.style.borderRightColor = c.marker;
   flip.style.transform = `scale(${S.mirrorX ? -1 : 1}, ${S.mirrorY ? -1 : 1})`;
   mL.style.top = mR.style.top = (innerHeight * S.markerPct) / 100 + 'px';
   mL.style.display = mR.style.display = S.showMarker ? '' : 'none';

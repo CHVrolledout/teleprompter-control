@@ -49,6 +49,7 @@ Then open the printed `http://<your-ip>:3000/prompter` on the iPad and `/control
 - **Progress bar**: tap or drag to jump anywhere in the script.
 - **Speed, font size, line gap, margins, eye line**: slider, or − / + buttons.
 - **Mirror / Flip**: for beam-splitter glass rigs.
+- **Colours**: presets, or pick any background. The text colour is chosen automatically for contrast. If you pick a text colour yourself, it is adjusted just enough to stay readable (at least 7:1 contrast).
 - **Script**: paste the text or open a `.txt` file, then press **Send to iPad**.
 - **Keyboard** (laptop): Space = play/pause, ↑/↓ = nudge (Shift = 3 lines), ←/→ = speed, − / = = font, Home = back to top.
 

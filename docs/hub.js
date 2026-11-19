@@ -25,6 +25,8 @@ export const DEFAULTS = {
   mirrorY: false,
   markerPct: 33,     // eye-line position, % from top
   showMarker: true,
+  bg: '#000000',     // background colour
+  fg: 'auto',        // text colour: 'auto' (best contrast) or a hex colour (kept readable)
   anchor: 0,         // reading position: paragraph index + fraction
   viewport: { w: 1180, h: 820 },
 };
@@ -42,6 +44,8 @@ const SETTABLE = {
   mirrorY: bool,
   markerPct: num(5, 80),
   showMarker: bool,
+  bg: (v) => (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v.toLowerCase() : undefined),
+  fg: (v) => (v === 'auto' ? v : typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v.toLowerCase() : undefined),
 };
 
 /**

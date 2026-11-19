@@ -11,8 +11,8 @@
 // Both modes deliver messages to `on.message(event, data)` where event is
 // 'script' | 'state' | 'pos' | 'cmd', and report link changes to `on.status(text, ok)`.
 
-import { createHub } from './hub.js?v=4';
-import { openRelay } from './relay.js?v=4';
+import { createHub } from './hub.js?v=5';
+import { openRelay } from './relay.js?v=5';
 
 const PEERJS_URL = 'https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js';
 const PEER_PREFIX = 'tprompt-remote-v1-';

@@ -53,5 +53,49 @@ export function anchorToY(m, a) {
   return r[i].top + Math.min(1, a - i) * r[i].h;
 }
 
+/* ---------- Colours: the text always stays readable on the background ---------- */
+export const MIN_CONTRAST = 7; // WCAG AAA — comfortable reading from a distance
+
+const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+const toHex = (c) => '#' + c.map((x) => Math.round(x).toString(16).padStart(2, '0')).join('');
+function luminance(hex) {
+  const [r, g, b] = rgb(hex).map((v) => {
+    v /= 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+export function contrast(a, b) {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+// Black or white, whichever reads better on this background.
+export const bestTextOn = (bg) => (contrast(bg, '#000000') >= contrast(bg, '#ffffff') ? '#000000' : '#ffffff');
+
+/**
+ * Effective colours for the prompter.
+ * fg 'auto' → black or white. A chosen fg that's too close to the background is
+ * blended towards black/white just enough to reach MIN_CONTRAST (keeping its hue).
+ */
+export function colorsFor(s) {
+  const bg = /^#[0-9a-f]{6}$/i.test(s.bg || '') ? s.bg : '#000000';
+  const extreme = bestTextOn(bg);
+  let fg = extreme, adjusted = false;
+  if (s.fg && s.fg !== 'auto') {
+    fg = s.fg;
+    if (contrast(fg, bg) < MIN_CONTRAST) {
+      const a = rgb(s.fg), b = rgb(extreme);
+      for (let t = 0.05; t <= 1.0001; t += 0.05) {
+        fg = toHex(a.map((x, i) => x + (b[i] - x) * Math.min(1, t)));
+        if (contrast(fg, bg) >= MIN_CONTRAST) break;
+      }
+      adjusted = true;
+    }
+  }
+  // Eye-line arrows: yellow if it shows up, otherwise the text colour.
+  const marker = contrast('#ffcc00', bg) >= 3 ? '#ffcc00' : fg;
+  return { bg, fg, marker, ratio: contrast(fg, bg), adjusted };
+}
+
 // translateY for the text block so that content-y sits centred on the eye line.
 export const textOffset = (s, vh, y) => (vh * s.markerPct) / 100 - linePx(s) / 2 - y;

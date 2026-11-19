@@ -7,7 +7,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Prompter Remote">
 <title>Prompter Controller</title>
-<link rel="stylesheet" href="text.css?v=4">
+<link rel="stylesheet" href="text.css?v=5">
 <style>
   :root {
     --bg: #0f1115; --panel: #181b22; --panel2: #20242d; --line: #2c313c;
@@ -58,8 +58,20 @@
   #ptext { position: absolute; left: 0; right: 0; top: 0; will-change: transform; }
   #eye { position: absolute; left: 0; right: 0; height: 0; opacity: .9; pointer-events: none; }
   #eye::before, #eye::after { content: ""; position: absolute; top: -8px; border: 7px solid transparent; }
-  #eye::before { left: 0; border-left: 10px solid var(--accent); }
-  #eye::after { right: 0; border-right: 10px solid var(--accent); }
+  #eye::before { left: 0; border-left: 10px solid var(--mk, var(--accent)); }
+  #eye::after { right: 0; border-right: 10px solid var(--mk, var(--accent)); }
+
+  .swatches { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .swatch { width: 48px; height: 48px; border-radius: 10px; border: 2px solid var(--line); cursor: pointer;
+    font: 700 17px -apple-system, system-ui, sans-serif; }
+  .swatch[aria-pressed=true] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+  .colorRow { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+  .colorRow label { width: 92px; color: var(--muted); font-size: 14px; }
+  .colorRow input[type=color] { width: 56px; height: 40px; border: 1px solid var(--line); border-radius: 10px;
+    background: var(--panel2); padding: 3px; cursor: pointer; }
+  .hex { font: 13px ui-monospace, Menlo, monospace; color: var(--muted); }
+  .contrastNote { font-size: 13px; color: var(--muted); margin-top: 6px; }
+  .contrastNote b { color: var(--ok); }
   #pvHint { position: absolute; right: 8px; bottom: 8px; font-size: 12px; color: #fff;
     background: rgba(0,0,0,.55); padding: 3px 8px; border-radius: 6px; pointer-events: none; }
   #offline { position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
@@ -188,6 +200,29 @@
       </div>
     </div>
 
+    <div class="card control-only">
+      <h2>Colours</h2>
+      <div class="swatches">
+        <button class="swatch" data-bg="#000000" data-fg="auto" title="White on black">Aa</button>
+        <button class="swatch" data-bg="#ffffff" data-fg="auto" title="Black on white">Aa</button>
+        <button class="swatch" data-bg="#000000" data-fg="#ffd60a" title="Yellow on black">Aa</button>
+        <button class="swatch" data-bg="#0b1f4d" data-fg="auto" title="White on navy">Aa</button>
+        <button class="swatch" data-bg="#0f3d2e" data-fg="auto" title="White on green">Aa</button>
+        <button class="swatch" data-bg="#fff4d6" data-fg="auto" title="Black on cream">Aa</button>
+      </div>
+      <div class="colorRow">
+        <label for="bgPick">Background</label>
+        <input type="color" id="bgPick" value="#000000">
+        <span class="hex" id="bgHex"></span>
+      </div>
+      <div class="colorRow">
+        <label for="fgPick">Text</label>
+        <input type="color" id="fgPick" value="#ffffff">
+        <button class="chip" id="fgAuto" aria-pressed="true">Auto contrast</button>
+      </div>
+      <div class="contrastNote" id="contrastNote"></div>
+    </div>
+
     <div class="card" id="scriptCard">
       <h2>Script</h2>
       <textarea id="script" spellcheck="false" placeholder="Paste the script here…"></textarea>
@@ -207,8 +242,8 @@
 </div>
 
 <script type="module">
-import { renderScript, applyTextStyle, measure, yToAnchor, anchorToY, linePx, targetVelocity, textOffset, SPEED_K } from './shared.js?v=4';
-import { connect, detectMode, normalizeRoom, rememberRoom, lastRoom } from './transport.js?v=4';
+import { renderScript, applyTextStyle, measure, yToAnchor, anchorToY, linePx, targetVelocity, textOffset, SPEED_K, colorsFor } from './shared.js?v=5';
+import { connect, detectMode, normalizeRoom, rememberRoom, lastRoom } from './transport.js?v=5';
 
 let link = null;
 let linkOk = false, linkText = 'Connecting…';
@@ -421,7 +456,34 @@ function syncControls() {
   }
   document.querySelectorAll('[data-toggle]').forEach((b) => b.setAttribute('aria-pressed', !!S[b.dataset.toggle]));
   $('#align').setAttribute('aria-pressed', S.align === 'center');
+  syncColors();
 }
+
+/* ---------- Colours ---------- */
+function syncColors() {
+  const c = colorsFor(S);
+  pv.style.background = c.bg;
+  ptext.style.color = c.fg;
+  eye.style.setProperty('--mk', c.marker);
+  if (document.activeElement !== $('#bgPick')) $('#bgPick').value = c.bg;
+  if (document.activeElement !== $('#fgPick')) $('#fgPick').value = c.fg;
+  $('#bgHex').textContent = c.bg.toUpperCase();
+  $('#fgAuto').setAttribute('aria-pressed', S.fg === 'auto');
+  $('#contrastNote').innerHTML = `Contrast <b>${c.ratio.toFixed(1)}:1</b>` +
+    (S.fg === 'auto' ? ' · text colour picked automatically'
+      : c.adjusted ? ' · your text colour was adjusted so it stays readable' : '');
+  document.querySelectorAll('.swatch').forEach((b) =>
+    b.setAttribute('aria-pressed', b.dataset.bg === (S.bg || '#000000') && b.dataset.fg === S.fg));
+}
+document.querySelectorAll('.swatch').forEach((b) => {
+  const c = colorsFor({ bg: b.dataset.bg, fg: b.dataset.fg });
+  b.style.background = c.bg;
+  b.style.color = c.fg;
+  b.addEventListener('click', () => { setValue('bg', b.dataset.bg); setValue('fg', b.dataset.fg); });
+});
+$('#bgPick').addEventListener('input', (e) => setValue('bg', e.target.value));
+$('#fgPick').addEventListener('input', (e) => setValue('fg', e.target.value));
+$('#fgAuto').addEventListener('click', () => setValue('fg', 'auto'));
 
 /* ---------- Script ---------- */
 function updateScriptStatus() {
