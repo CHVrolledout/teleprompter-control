@@ -100,7 +100,7 @@ export function createHub({ initial = {}, emit, counts, save = () => {} }) {
         if (!isFinite(a)) break;
         state.anchor = Math.max(0, a);
         emit('cmd', { type: 'seek', anchor: state.anchor }, 'prompter');
-        emit('pos', { anchor: state.anchor, seek: true }, 'controller');
+        emit('pos', { anchor: state.anchor, seek: true });
         saveSoon();
         break;
       }
@@ -108,7 +108,7 @@ export function createHub({ initial = {}, emit, counts, save = () => {} }) {
         state.playing = false;
         state.anchor = 0;
         emit('cmd', { type: 'seek', anchor: 0 }, 'prompter');
-        emit('pos', { anchor: 0, seek: true }, 'controller');
+        emit('pos', { anchor: 0, seek: true });
         changed();
         break;
     }
@@ -121,7 +121,7 @@ export function createHub({ initial = {}, emit, counts, save = () => {} }) {
       state.viewport = { w: Math.round(p.vw), h: Math.round(p.vh) };
       changed();
     }
-    emit('pos', { anchor: state.anchor }, 'controller');
+    emit('pos', { anchor: state.anchor });
     saveSoon();
   }
 

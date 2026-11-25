@@ -25,6 +25,16 @@ Good to know:
 - Reconnecting needs internet again for the handshake.
 - Some office or guest Wi-Fi networks block devices from talking to each other. Use a phone hotspot or a normal router instead.
 
+## Two iPads with the same script
+
+1. Open the **Prompter** on the main iPad as usual. It shows the room code.
+2. On the second iPad, open the **Prompter**, tap **Join another iPad as a second screen**, and enter the same code.
+
+The second iPad shows the same script, settings and play/pause, and stays on the same words as the main iPad, even if the screens are different sizes. The controller shows "2 iPads connected".
+
+- The main iPad does the scrolling. The second one follows it, so if the main iPad disconnects, the second one stops moving until it's back.
+- In local server mode there's no code to enter: the first iPad to connect becomes the main one, and if it leaves, the next one takes over.
+
 ## Local server (offline backup)
 
 You need Node.js. There's nothing to install.

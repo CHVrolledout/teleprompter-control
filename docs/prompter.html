@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="Prompter">
 <title>Prompter</title>
-<link rel="stylesheet" href="text.css?v=5">
+<link rel="stylesheet" href="text.css?v=6">
 <style>
   html, body { margin: 0; height: 100%; background: #000; color: #fff; overflow: hidden;
     -webkit-user-select: none; user-select: none; touch-action: none; -webkit-touch-callout: none; }
@@ -37,6 +37,17 @@
   #qr:empty { display: none; }
   #qr svg { width: 180px; height: 180px; }
   #ctlUrl { color: #ddd; font-size: 15px; word-break: break-all; }
+  #followBox, #joinBox { display: none; flex-direction: column; align-items: center; gap: 10px; }
+  #followBox.show, #joinBox.show { display: flex; }
+  .code { font: 800 64px ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .12em; color: #ffcc00; }
+  .link { background: none; border: 1px solid #555; color: #ddd; border-radius: 10px; padding: 10px 16px;
+    font: 500 16px -apple-system, system-ui, sans-serif; cursor: pointer; }
+  #joinForm { display: flex; gap: 8px; }
+  #joinForm[hidden] { display: none; }
+  #joinInput { font: 700 26px ui-monospace, Menlo, monospace; letter-spacing: .12em; text-transform: uppercase;
+    width: 220px; text-align: center; padding: 8px; border-radius: 10px; border: 1px solid #555; background: #111; color: #fff; }
+  #joinForm button { font: 700 18px -apple-system, system-ui, sans-serif; background: #ffcc00; color: #1a1400;
+    border: 0; border-radius: 10px; padding: 0 18px; }
   .go { margin-top: 6px; background: #ffcc00; color: #1a1400; border-radius: 12px; padding: 12px 22px; font-weight: 700; }
 </style>
 </head>
@@ -53,6 +64,20 @@
     <div id="roomCode">······</div>
     <div id="qr"></div>
     <span>On your phone, scan the QR code — or open<br><span id="ctlUrl"></span><br>and enter the code.</span>
+    <small>Second iPad? Open the Prompter on it, tap “Join as a second screen” and enter this code.</small>
+  </div>
+  <div id="followBox">
+    <span>Second screen · following room</span>
+    <div id="followCode" class="code"></div>
+    <span>Shows the same script and position as the main iPad.</span>
+    <button class="link" id="leaveFollow" type="button">Use this iPad as the main prompter instead</button>
+  </div>
+  <div id="joinBox">
+    <button class="link" id="joinBtn" type="button">Join another iPad as a second screen</button>
+    <form id="joinForm" hidden>
+      <input id="joinInput" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="8" placeholder="Room code" required>
+      <button type="submit">Join</button>
+    </form>
   </div>
   <div class="go">Tap anywhere to start</div>
   <small>Goes full screen. Double-tap the prompter any time to see this screen again.<br>
@@ -60,8 +85,8 @@
 </div>
 
 <script type="module">
-import { renderScript, applyTextStyle, measure, yToAnchor, anchorToY, linePx, targetVelocity, textOffset, colorsFor } from './shared.js?v=5';
-import { connect } from './transport.js?v=5';
+import { renderScript, applyTextStyle, measure, yToAnchor, anchorToY, linePx, targetVelocity, textOffset, colorsFor } from './shared.js?v=6';
+import { connect, normalizeRoom } from './transport.js?v=6';
 
 const textEl = document.getElementById('text');
 const flip = document.getElementById('flip');
@@ -76,6 +101,8 @@ let v = 0;             // current velocity px/s (eased towards target)
 let pending = 0;       // smooth correction still to apply (nudges / seeks)
 let scriptText = null;
 let link = null;       // transport
+let isLead = true;     // main iPad (scrolls + reports) vs second screen (follows the main one)
+const followRoom = normalizeRoom(new URLSearchParams(location.search).get('room'));
 
 function applyState() {
   applyTextStyle(textEl, S);
@@ -114,8 +141,9 @@ const handlers = {
       y = anchorToY(m, a); pending = 0;
     }
   },
+  role({ lead }) { isLead = lead; },
   cmd(c) {
-    if (!S) return;
+    if (!S || !isLead) return;
     if (c.type === 'nudge') pending += c.px + c.lines * linePx(S);
     if (c.type === 'seek') {
       const target = anchorToY(m, c.anchor);
@@ -123,7 +151,15 @@ const handlers = {
       if (Math.abs(dist) > innerHeight) { y = target; pending = 0; } else pending += dist;
     }
   },
-  pos() {},
+  // Second screen: glide to the main iPad's reading position (anchor-based, so different
+  // screen sizes still land on the same words).
+  pos(p) {
+    if (isLead || !S) return;
+    const target = anchorToY(m, p.anchor) + v * 0.08; // small latency compensation
+    const err = target - (y + pending);
+    if (Math.abs(err) > innerHeight * 0.6) { y = target; pending = 0; }
+    else if (Math.abs(err) > 1) pending += err;
+  },
 };
 
 function setStatus(text, ok) {
@@ -149,14 +185,14 @@ function frame(now) {
     if (y < 0) { y = 0; pending = Math.max(0, pending); }
     if (y > m.total) {
       y = m.total; pending = Math.min(0, pending);
-      if (S.playing && link) link.command({ type: 'pause' });
+      if (S.playing && link && isLead) link.command({ type: 'pause' });
     }
     textEl.style.transform = `translate3d(0, ${textOffset(S, innerHeight, y)}px, 0)`;
 
     // report position ~10x/sec while moving, 1x/sec when idle
     const anchor = Math.round(yToAnchor(m, y) * 10000) / 10000;
     const key = anchor + '|' + innerWidth + 'x' + innerHeight;
-    if (link && now - lastReport > (key !== lastSent ? 100 : 1000)) {
+    if (link && isLead && now - lastReport > (key !== lastSent ? 100 : 1000)) {
       lastReport = now; lastSent = key;
       link.position({ anchor, vw: innerWidth, vh: innerHeight });
     }
@@ -166,8 +202,27 @@ function frame(now) {
 requestAnimationFrame(frame);
 
 // Connect (local server if present, otherwise peer-to-peer room)
-link = await connect('prompter', { message: (ev, data) => handlers[ev]?.(data), status: setStatus });
-if (link.mode === 'p2p') showRoom(link.room);
+link = await connect('prompter', { message: (ev, data) => handlers[ev]?.(data), status: setStatus }, { room: followRoom });
+if (link.mode === 'p2p') {
+  if (isLead) { showRoom(link.room); document.getElementById('joinBox').classList.add('show'); }
+  else {
+    document.getElementById('followCode').textContent = link.room;
+    document.getElementById('followBox').classList.add('show');
+  }
+}
+
+// Second-screen controls on the start screen
+document.getElementById('joinBtn').addEventListener('click', () => {
+  document.getElementById('joinBtn').hidden = true;
+  document.getElementById('joinForm').hidden = false;
+  document.getElementById('joinInput').focus();
+});
+document.getElementById('joinForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const code = normalizeRoom(document.getElementById('joinInput').value);
+  if (code.length >= 4) location.search = '?room=' + code;
+});
+document.getElementById('leaveFollow').addEventListener('click', () => { location.search = ''; });
 
 async function showRoom(room) {
   const url = new URL('controller.html', location.href);
@@ -194,7 +249,8 @@ async function keepAwake() {
   try { await navigator.wakeLock?.request('screen'); } catch {}
 }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') keepAwake(); });
-startEl.addEventListener('click', async () => {
+startEl.addEventListener('click', async (e) => {
+  if (e.target.closest('button, input, form')) return; // the join/leave controls
   startEl.classList.add('hidden');
   const de = document.documentElement;
   try { await (de.requestFullscreen?.() || de.webkitRequestFullscreen?.()); } catch {}

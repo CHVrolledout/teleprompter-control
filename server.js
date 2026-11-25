@@ -17,11 +17,20 @@ const PORT = Number(process.env.PORT) || 3000;
 const APP = path.join(ROOT, 'docs');
 const STATE_FILE = path.join(ROOT, 'state.json');
 
-const clients = new Set(); // { res, role }
+const clients = new Set(); // { res, role, id }
 const count = (role) => [...clients].filter((c) => c.role === role).length;
 
 function send(res, event, data) {
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
+// With several iPads, the first one connected is the "main" prompter: it scrolls and reports
+// the position. The others follow it. If the main one leaves, the next one takes over.
+let leadId = null;
+function electLead() {
+  const prompters = [...clients].filter((c) => c.role === 'prompter');
+  if (!prompters.some((c) => c.id === leadId)) leadId = prompters[0]?.id ?? null;
+  for (const c of prompters) send(c.res, 'role', { lead: c.id === leadId });
 }
 
 let initial = {};
@@ -75,14 +84,17 @@ const server = http.createServer(async (req, res) => {
     const role = url.searchParams.get('role') === 'prompter' ? 'prompter' : 'controller';
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
     res.write('retry: 1000\n\n');
-    const client = { res, role };
+    const id = url.searchParams.get('id') || Math.random().toString(36).slice(2);
+    const client = { res, role, id };
     clients.add(client);
     send(res, 'script', { script: hub.state.script });
+    electLead();
     hub.changed();
     const ping = setInterval(() => res.write(': ping\n\n'), 15000);
     req.on('close', () => {
       clearInterval(ping);
       clients.delete(client);
+      electLead();
       hub.changed();
     });
     return;
@@ -92,7 +104,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = await readBody(req);
       if (url.pathname === '/api/cmd') hub.command(body);
-      else hub.position(body);
+      else if (!body.id || body.id === leadId) hub.position(body); // only the main iPad sets the position
       res.writeHead(204);
     } catch {
       res.writeHead(400);

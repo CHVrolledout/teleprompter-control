@@ -11,8 +11,8 @@
 // Both modes deliver messages to `on.message(event, data)` where event is
 // 'script' | 'state' | 'pos' | 'cmd', and report link changes to `on.status(text, ok)`.
 
-import { createHub } from './hub.js?v=5';
-import { openRelay } from './relay.js?v=5';
+import { createHub } from './hub.js?v=6';
+import { openRelay } from './relay.js?v=6';
 
 const PEERJS_URL = 'https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js';
 const PEER_PREFIX = 'tprompt-remote-v1-';
@@ -52,8 +52,10 @@ function post(url, body) {
 
 /* ---------------- Server mode ---------------- */
 function serverTransport(role, on) {
-  const es = new EventSource(`api/events?role=${role}`);
-  for (const ev of ['script', 'state', 'pos', 'cmd']) {
+  // The server picks one prompter as the "main" one and tells each prompter via a 'role' event.
+  const id = Math.random().toString(36).slice(2, 10);
+  const es = new EventSource(`api/events?role=${role}&id=${id}`);
+  for (const ev of ['script', 'state', 'pos', 'cmd', 'role']) {
     es.addEventListener(ev, (e) => on.message(ev, JSON.parse(e.data)));
   }
   es.onopen = () => on.status('Connected to local server', true);
@@ -61,7 +63,7 @@ function serverTransport(role, on) {
   return {
     mode: 'server',
     command: (body) => post('api/cmd', body),
-    position: (p) => post('api/pos', p),
+    position: (p) => post('api/pos', { ...p, id }),
   };
 }
 
@@ -93,7 +95,7 @@ function keepRelay(room, side, onMessage, onChange, onReady) {
   attempt();
 }
 
-// The iPad: hosts the hub and accepts controllers over both paths.
+// The main iPad: hosts the hub and accepts controllers and second-screen iPads over both paths.
 async function p2pHost(on) {
   let room = normalizeRoom(store.get(ROOM_KEY));
   if (room.length < 4) { room = makeRoom(); store.set(ROOM_KEY, room); }
@@ -102,16 +104,23 @@ async function p2pHost(on) {
   try { initial = JSON.parse(store.get(STATE_KEY) || '{}'); } catch {}
 
   const conns = new Set();                 // direct PeerJS connections
-  const relayCtls = new Map();             // controller id -> { last, direct }
+  const relayCtls = new Map();             // peer id -> { last, direct, as }
   let relay = null;
   let lastRelayPos = 0;
 
   const openConns = () => [...conns].filter((c) => c.open);
-  const relayOnly = () => [...relayCtls.values()].filter((c) => !c.direct).length;
+  const relayPeers = () => [...relayCtls.values()].filter((c) => !c.direct);
+  const relayOnly = () => relayPeers().length;
+  // Who's connected: second-screen iPads ("prompter") vs controllers.
+  const tally = () => {
+    const kinds = [...openConns().map((c) => c.metadata?.as), ...relayPeers().map((c) => c.as)];
+    const screens = kinds.filter((k) => k === 'prompter').length;
+    return { screens, controllers: kinds.length - screens };
+  };
 
   const hub = createHub({
     initial,
-    counts: () => ({ prompters: 1, controllers: openConns().length + relayOnly() }),
+    counts: () => { const t = tally(); return { prompters: 1 + t.screens, controllers: t.controllers }; },
     save: (s) => store.set(STATE_KEY, JSON.stringify(s)),
     emit: (event, data, role) => {
       if (role !== 'controller') on.message(event, data);
@@ -129,15 +138,20 @@ async function p2pHost(on) {
   });
 
   // Show the script immediately, even before any network.
+  on.message('role', { lead: true });
   on.message('script', { script: hub.state.script });
   on.message('state', hub.publicState());
 
   let signal = 'Connecting…';
   const report = () => {
-    const d = openConns().length, r = relayOnly(), n = d + r;
-    if (n) {
+    const d = openConns().length, r = relayOnly();
+    const { screens, controllers } = tally();
+    if (d + r) {
       const how = r && !d ? 'via internet' : d && !r ? 'direct' : 'direct + internet';
-      on.status(`Room ${room} · ${n} controller${n > 1 ? 's' : ''} connected (${how})`, true);
+      const parts = [];
+      if (controllers) parts.push(`${controllers} controller${controllers > 1 ? 's' : ''}`);
+      if (screens) parts.push(`${screens} more iPad${screens > 1 ? 's' : ''}`);
+      on.status(`Room ${room} · ${parts.join(' + ')} connected (${how})`, true);
     } else {
       on.status(`Room ${room} · ${signal}`, false);
     }
@@ -180,7 +194,7 @@ async function p2pHost(on) {
     }
     const known = relayCtls.get(m.id);
     const wasCounted = known && !known.direct;
-    relayCtls.set(m.id, { last: Date.now(), direct: !!m.direct });
+    relayCtls.set(m.id, { last: Date.now(), direct: !!m.direct, as: m.as || known?.as || 'controller' });
     if (m.kind === 'hello') {
       if (!m.direct && (!known || m.want)) relay?.send({ ev: 'script', data: { script: hub.state.script } });
       if (wasCounted !== !m.direct) { hub.changed(); report(); }
@@ -205,8 +219,10 @@ async function p2pHost(on) {
   };
 }
 
-// The controller: connects to the iPad's room over both paths.
-async function p2pClient(room, on) {
+// A controller, or a second-screen iPad (as = 'prompter'): connects to the main iPad's room.
+async function p2pClient(room, on, as = 'controller') {
+  if (as === 'prompter') on.message('role', { lead: false });
+  const label = as === 'prompter' ? 'Following room' : 'Connected · room';
   let peer = null;
   let conn = null;
   let dialedAt = 0;
@@ -218,12 +234,12 @@ async function p2pClient(room, on) {
   const viaRelay = () => !direct() && Date.now() - relayHeardAt < 6000;
 
   function report() {
-    if (direct()) on.status(`Connected · room ${room} (direct)`, true);
-    else if (viaRelay()) on.status(`Connected · room ${room} (via internet)`, true);
+    if (direct()) on.status(`${label} ${room} (direct)`, true);
+    else if (viaRelay()) on.status(`${label} ${room} (via internet)`, true);
     else on.status(problem || `Connecting to room ${room}…`, false);
   }
 
-  const hello = (want = false) => relay?.send({ kind: 'hello', id: relay.id, direct: direct(), want });
+  const hello = (want = false) => relay?.send({ kind: 'hello', id: relay.id, direct: direct(), want, as });
 
   /* Path 1: direct WebRTC */
   async function ensurePeer() {
@@ -245,7 +261,7 @@ async function p2pClient(room, on) {
     if (conn && (conn.open || Date.now() - dialedAt < 10000)) return;
     if (conn) try { conn.close(); } catch {}
     dialedAt = Date.now();
-    const c = peer.connect(PEER_PREFIX + room, { reliable: true, serialization: 'json' });
+    const c = peer.connect(PEER_PREFIX + room, { reliable: true, serialization: 'json', metadata: { as } });
     conn = c;
     c.on('open', () => { if (conn === c) { problem = ''; report(); hello(); } });
     c.on('data', (m) => { if (conn === c && m && m.ev) on.message(m.ev, m.data); });
@@ -283,7 +299,7 @@ async function p2pClient(room, on) {
     room,
     command: (body) => {
       if (direct()) conn.send({ kind: 'cmd', body });
-      else relay?.send({ kind: 'cmd', id: relay.id, body });
+      else relay?.send({ kind: 'cmd', id: relay.id, as, body });
     },
     position: () => {},
   };
@@ -291,12 +307,14 @@ async function p2pClient(room, on) {
 
 /**
  * role: 'prompter' | 'controller'
- * opts.room: room code (controller in p2p mode)
+ * opts.room: room code to join (controller, or a prompter joining as a second screen)
  */
 export async function connect(role, on, opts = {}) {
   const mode = opts.mode || (await detectMode());
   if (mode === 'server') return serverTransport(role, on);
-  return role === 'prompter' ? p2pHost(on) : p2pClient(normalizeRoom(opts.room), on);
+  const room = normalizeRoom(opts.room);
+  if (role === 'prompter' && room.length < 4) return p2pHost(on);
+  return p2pClient(room, on, role);
 }
 
 export const rememberRoom = (room) => store.set('tp-last-room', room);

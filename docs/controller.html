@@ -7,7 +7,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Prompter Remote">
 <title>Prompter Controller</title>
-<link rel="stylesheet" href="text.css?v=5">
+<link rel="stylesheet" href="text.css?v=6">
 <style>
   :root {
     --bg: #0f1115; --panel: #181b22; --panel2: #20242d; --line: #2c313c;
@@ -242,8 +242,8 @@
 </div>
 
 <script type="module">
-import { renderScript, applyTextStyle, measure, yToAnchor, anchorToY, linePx, targetVelocity, textOffset, SPEED_K, colorsFor } from './shared.js?v=5';
-import { connect, detectMode, normalizeRoom, rememberRoom, lastRoom } from './transport.js?v=5';
+import { renderScript, applyTextStyle, measure, yToAnchor, anchorToY, linePx, targetVelocity, textOffset, SPEED_K, colorsFor } from './shared.js?v=6';
+import { connect, detectMode, normalizeRoom, rememberRoom, lastRoom } from './transport.js?v=6';
 
 let link = null;
 let linkOk = false, linkText = 'Connecting…';
@@ -321,7 +321,8 @@ handlers.state = (incoming) => {
 function updatePill() {
   const online = linkOk && !!S && S.prompters > 0;
   const route = linkText.includes('(via internet)') ? ' · via internet' : linkText.includes('(direct)') ? ' · direct' : '';
-  ipadPill.textContent = online ? 'iPad connected' + route : linkOk ? 'iPad offline' : linkText;
+  const pads = S && S.prompters > 1 ? `${S.prompters} iPads connected` : 'iPad connected';
+  ipadPill.textContent = online ? pads + route : linkOk ? 'iPad offline' : linkText;
   ipadPill.title = linkText;
   ipadPill.classList.toggle('ok', online);
   pv.classList.toggle('no-ipad', !online);
