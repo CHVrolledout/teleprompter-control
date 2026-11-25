@@ -48,7 +48,16 @@
     width: 220px; text-align: center; padding: 8px; border-radius: 10px; border: 1px solid #555; background: #111; color: #fff; }
   #joinForm button { font: 700 18px -apple-system, system-ui, sans-serif; background: #ffcc00; color: #1a1400;
     border: 0; border-radius: 10px; padding: 0 18px; }
-  .go { margin-top: 6px; background: #ffcc00; color: #1a1400; border-radius: 12px; padding: 12px 22px; font-weight: 700; }
+  .go { margin-top: 6px; background: #ffcc00; color: #1a1400; border: 0; border-radius: 14px; padding: 16px 34px;
+    font: 700 22px -apple-system, system-ui, sans-serif; cursor: pointer; }
+  .go:active { transform: scale(.97); }
+  .mirrorOpts { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: 6px;
+    padding: 14px 18px; border: 1px solid #333; border-radius: 14px; }
+  .mirrorOpts label { display: flex; align-items: center; gap: 10px; font-size: 17px; cursor: pointer; }
+  .mirrorOpts input { width: 22px; height: 22px; accent-color: #ffcc00; }
+  #mirrorOwn { display: flex; gap: 8px; }
+  #mirrorOwn[hidden] { display: none; }
+  .link[aria-pressed=true] { background: #ffcc00; color: #1a1400; border-color: #ffcc00; font-weight: 700; }
 </style>
 </head>
 <body>
@@ -72,6 +81,13 @@
     <span>Shows the same script and position as the main iPad.</span>
     <button class="link" id="leaveFollow" type="button">Use this iPad as the main prompter instead</button>
   </div>
+  <div class="mirrorOpts" id="mirrorBox" hidden>
+    <label><input type="checkbox" id="mirrorFollow" checked> Use the main iPad’s mirror setting</label>
+    <div id="mirrorOwn" hidden>
+      <button class="link" id="ownX" type="button" aria-pressed="false">Mirror ⇋</button>
+      <button class="link" id="ownY" type="button" aria-pressed="false">Flip ⇵</button>
+    </div>
+  </div>
   <div id="joinBox">
     <button class="link" id="joinBtn" type="button">Join another iPad as a second screen</button>
     <form id="joinForm" hidden>
@@ -79,7 +95,7 @@
       <button type="submit">Join</button>
     </form>
   </div>
-  <div class="go">Tap anywhere to start</div>
+  <button class="go" id="startBtn" type="button">Tap here to start</button>
   <small>Goes full screen. Double-tap the prompter any time to see this screen again.<br>
     Tip: Share → Add to Home Screen gives a true full-screen prompter. Set Settings → Display → Auto-Lock to “Never”.</small>
 </div>
@@ -110,10 +126,36 @@ function applyState() {
   document.documentElement.style.background = document.body.style.background = flip.style.background = c.bg;
   textEl.style.color = c.fg;
   mL.style.borderLeftColor = mR.style.borderRightColor = c.marker;
-  flip.style.transform = `scale(${S.mirrorX ? -1 : 1}, ${S.mirrorY ? -1 : 1})`;
+  const mir = mirrorFor();
+  flip.style.transform = `scale(${mir.x ? -1 : 1}, ${mir.y ? -1 : 1})`;
   mL.style.top = mR.style.top = (innerHeight * S.markerPct) / 100 + 'px';
   mL.style.display = mR.style.display = S.showMarker ? '' : 'none';
 }
+
+/* ---------- Mirror: a second-screen iPad can keep its own setting (saved on this iPad) ---------- */
+const MIRROR_KEY = 'tp-own-mirror';
+let own = { follow: true, x: false, y: false };
+try { own = { ...own, ...JSON.parse(localStorage.getItem(MIRROR_KEY) || '{}') }; } catch {}
+const saveOwn = () => { try { localStorage.setItem(MIRROR_KEY, JSON.stringify(own)); } catch {} };
+// The main iPad always uses the shared (controller) setting.
+const mirrorFor = () => (isLead || own.follow ? { x: !!S?.mirrorX, y: !!S?.mirrorY } : own);
+
+function syncMirrorBox() {
+  document.getElementById('mirrorBox').hidden = isLead;
+  document.getElementById('mirrorFollow').checked = own.follow;
+  document.getElementById('mirrorOwn').hidden = own.follow;
+  document.getElementById('ownX').setAttribute('aria-pressed', own.x);
+  document.getElementById('ownY').setAttribute('aria-pressed', own.y);
+  if (S) applyState();
+}
+document.getElementById('mirrorFollow').addEventListener('change', (e) => {
+  own.follow = e.target.checked;
+  // Switching to "own": start from a copy of the main iPad's current setting.
+  if (!own.follow && S) { own.x = !!S.mirrorX; own.y = !!S.mirrorY; }
+  saveOwn(); syncMirrorBox();
+});
+document.getElementById('ownX').addEventListener('click', () => { own.x = !own.x; saveOwn(); syncMirrorBox(); });
+document.getElementById('ownY').addEventListener('click', () => { own.y = !own.y; saveOwn(); syncMirrorBox(); });
 
 function relayout() {
   const a = yToAnchor(m, y);
@@ -141,7 +183,7 @@ const handlers = {
       y = anchorToY(m, a); pending = 0;
     }
   },
-  role({ lead }) { isLead = lead; },
+  role({ lead }) { isLead = lead; syncMirrorBox(); },
   cmd(c) {
     if (!S || !isLead) return;
     if (c.type === 'nudge') pending += c.px + c.lines * linePx(S);
@@ -249,8 +291,7 @@ async function keepAwake() {
   try { await navigator.wakeLock?.request('screen'); } catch {}
 }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') keepAwake(); });
-startEl.addEventListener('click', async (e) => {
-  if (e.target.closest('button, input, form')) return; // the join/leave controls
+document.getElementById('startBtn').addEventListener('click', async () => {
   startEl.classList.add('hidden');
   const de = document.documentElement;
   try { await (de.requestFullscreen?.() || de.webkitRequestFullscreen?.()); } catch {}

@@ -32,6 +32,7 @@ Good to know:
 
 The second iPad shows the same script, settings and play/pause, and stays on the same words as the main iPad, even if the screens are different sizes. The controller shows "2 iPads connected".
 
+- **Mirror per iPad:** by default the second iPad copies the main iPad's Mirror/Flip. On its start screen (double-tap to open it), untick "Use the main iPad's mirror setting" to give it its own. It's saved on that iPad.
 - The main iPad does the scrolling. The second one follows it, so if the main iPad disconnects, the second one stops moving until it's back.
 - In local server mode there's no code to enter: the first iPad to connect becomes the main one, and if it leaves, the next one takes over.
 
